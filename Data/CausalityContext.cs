@@ -1,5 +1,6 @@
 ﻿using ApiCausality360.Models;
 using Microsoft.EntityFrameworkCore;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace ApiCausality360.Data
 {
@@ -41,6 +42,15 @@ namespace ApiCausality360.Data
                 new Category { Id = 4, Name = "Social", Description = "Eventos sociales y culturales" },
                 new Category { Id = 5, Name = "Internacional", Description = "Eventos internacionales y geopolíticos" }
             );
+
+            //select * from Events
+            //DELETE FROM Events
+            //WHERE id = '';
+            //select* from SimilarEvents
+            //select* from EventCategories
+            //select* from Categories
+
+            //DELETE FROM Events WHERE CAST(Fecha AS DATE) = CAST(GETDATE() AS DATE)
         }
     }
 }
