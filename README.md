@@ -27,6 +27,7 @@ API RESTful desarrollada con .NET 9.0 que proporciona análisis automatizado de 
 - ✅ **Deduplicación automática** de eventos similares
 - ✅ **Extracción de imágenes** desde contenido RSS
 - ✅ **Gestión segura de secretos** con Azure Key Vault
+- ✅ **Sistema de monitoreo** con UptimeRobot para mantener la API activa
 
 ## 📱 Funcionalidades Principales
 
@@ -41,6 +42,9 @@ Caché inteligente con TTL adaptativo que optimiza el rendimiento y reduce llama
 
 ### 🔒 Seguridad Empresarial
 Gestión de secretos con Azure Key Vault, rate limiting configurable y CORS optimizado para producción.
+
+### 📡 Monitoreo Continuo
+Sistema de ping con UptimeRobot que mantiene la aplicación Azure siempre activa, evitando el "cold start" y asegurando respuesta inmediata.
 
 ## 🏗️ Estructura del Proyecto
 
@@ -79,6 +83,7 @@ La API proporciona endpoints RESTful para la gestión completa de eventos y aná
 - **POST /api/events/process-today-news** - Procesar noticias actuales
 - **POST /api/events/generate-with-ai** - Crear evento con análisis IA
 - **GET /api/events/by-category/{category}** - Filtrar por categoría
+- **GET /api/events/ping** - Endpoint de monitoreo para UptimeRobot
 
 ## 🤖 Motor de IA (Groq Integration)
 
@@ -138,6 +143,7 @@ La API utiliza **Groq API** con el modelo **Llama 3.1** para generar:
 - 🛡️ **Rate limiting** configurable por endpoint
 - 📊 **Procesamiento en lotes** optimizado
 - 🎯 **Deduplicación automática** de contenido
+- 📡 **Monitoreo UptimeRobot** para disponibilidad 24/7
 
 ## 🔄 Actualizaciones Recientes
 
@@ -151,6 +157,7 @@ La API utiliza **Groq API** con el modelo **Llama 3.1** para generar:
 - Integración completa con Azure Key Vault
 - Categorización automática inteligente
 - Sistema de eventos similares históricos
+- Endpoint de monitoreo con UptimeRobot para disponibilidad continua
 
 ---
 
