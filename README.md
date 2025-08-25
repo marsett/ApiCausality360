@@ -4,7 +4,7 @@
 
 API RESTful desarrollada con .NET 9.0 que proporciona análisis automatizado de noticias españolas mediante inteligencia artificial. Procesa diariamente 5 fuentes RSS, generando análisis histórico, impacto y predicciones fundamentadas con IA.
 
-🔗 **[Documentación Interactiva](https://apicausality360.azurewebsites.net/scalar/v1)**
+🔗 **[Ver Api en Vivo](https://apicausality360.azurewebsites.net/scalar/v1)**
 
 ## 🛠️ Tecnologías Utilizadas
 
