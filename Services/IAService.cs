@@ -146,8 +146,13 @@ namespace ApiCausality360.Services
 
                     if (string.IsNullOrEmpty(apiKey))
                     {
-                        return "Error: API Key de Groq no configurada";
+                        Console.WriteLine($"❌ API Key missing");
+                        return "";
                     }
+
+                    // 🔥 HttpClient nuevo para cada request
+                    using var httpClient = new HttpClient();
+                    httpClient.Timeout = TimeSpan.FromSeconds(45); // 🔥 AUMENTAR TIMEOUT: 30s → 45s
 
                     var requestBody = new
                     {
@@ -163,8 +168,8 @@ namespace ApiCausality360.Services
                                 content = prompt
                             }
                         },
-                        max_tokens = 400, // 🔥 REDUCIDO: Para respuestas más cortas (120-150 palabras)
-                        temperature = 0.5, // Más determinista para respuestas consistentes
+                        max_tokens = 500, // 🔥 AUMENTAR TOKENS: 400 → 500
+                        temperature = 0.5,
                         top_p = 0.85,
                         stream = false
                     };
@@ -176,13 +181,17 @@ namespace ApiCausality360.Services
 
                     var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                    // Limpiar headers previos y añadir autorización
-                    _httpClient.DefaultRequestHeaders.Clear();
-                    _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+                    httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+                    httpClient.DefaultRequestHeaders.Add("User-Agent", "ApiCausality360/1.0");
 
-                    Console.WriteLine($"🤖 Calling Groq API for similar event detail (attempt {attempt}/{maxRetries})...");
-                    var response = await _httpClient.PostAsync(apiUrl, content);
+                    Console.WriteLine($"🤖 Calling Groq API (attempt {attempt}/{maxRetries})...");
+                    var startTime = DateTime.Now; // 🔥 MEDIR TIEMPO
+                    
+                    var response = await httpClient.PostAsync(apiUrl, content);
                     var responseContent = await response.Content.ReadAsStringAsync();
+                    
+                    var elapsed = DateTime.Now - startTime; // 🔥 MEDIR TIEMPO
+                    Console.WriteLine($"⏱️ API call took {elapsed.TotalSeconds:F1}s");
 
                     if (response.IsSuccessStatusCode)
                     {
@@ -194,12 +203,27 @@ namespace ApiCausality360.Services
                             if (firstChoice.TryGetProperty("message", out var message) &&
                                 message.TryGetProperty("content", out var messageContent))
                             {
-                                var content_result = messageContent.GetString()?.Trim() ?? "Contenido no disponible";
+                                var content_result = messageContent.GetString()?.Trim() ?? "";
                                 
-                                // 🔥 VERIFICACIÓN: Asegurar que la respuesta está completa
-                                if (content_result.EndsWith("...") || content_result.Length < 100)
+                                // 🔥 LOGGING MEJORADO
+                                Console.WriteLine($"📝 AI response length: {content_result.Length} chars");
+                                
+                                if (string.IsNullOrWhiteSpace(content_result))
                                 {
-                                    Console.WriteLine($"⚠️ Response seems incomplete, retrying...");
+                                    Console.WriteLine($"⚠️ Empty response, retrying (attempt {attempt})...");
+                                    if (attempt < maxRetries)
+                                    {
+                                        await Task.Delay(2000);
+                                        continue;
+                                    }
+                                    Console.WriteLine($"❌ Final empty response after {maxRetries} attempts");
+                                    return "";
+                                }
+                                
+                                // 🔥 VERIFICAR RESPUESTA VÁLIDA
+                                if (content_result.Length < 50)
+                                {
+                                    Console.WriteLine($"⚠️ Response too short ({content_result.Length} chars), retrying...");
                                     if (attempt < maxRetries)
                                     {
                                         await Task.Delay(2000);
@@ -207,17 +231,32 @@ namespace ApiCausality360.Services
                                     }
                                 }
                                 
-                                Console.WriteLine($"✅ Groq API success with complete response (attempt {attempt})");
+                                Console.WriteLine($"✅ AI success: {content_result.Substring(0, Math.Min(100, content_result.Length))}...");
                                 return content_result;
                             }
                         }
 
-                        return "Error: Formato de respuesta inesperado";
+                        Console.WriteLine($"⚠️ Unexpected response format");
+                        if (attempt < maxRetries)
+                        {
+                            await Task.Delay(2000);
+                            continue;
+                        }
+                        return "";
                     }
-                    else if ((int)response.StatusCode == 429) // Too Many Requests
+                    else if (response.StatusCode == System.Net.HttpStatusCode.InternalServerError)
+                    {
+                        Console.WriteLine($"⚠️ Groq service error 500 (attempt {attempt}/{maxRetries})");
+                        if (attempt < maxRetries)
+                        {
+                            await Task.Delay(3000);
+                            continue;
+                        }
+                        return "";
+                    }
+                    else if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
                     {
                         Console.WriteLine($"⚠️ Rate limit hit (attempt {attempt}/{maxRetries})");
-
                         if (attempt < maxRetries)
                         {
                             var waitTime = GetRetryAfterTime(responseContent);
@@ -225,16 +264,29 @@ namespace ApiCausality360.Services
                             await Task.Delay(waitTime * 1000);
                             continue;
                         }
-                        else
-                        {
-                            return $"Rate limit exceeded. Análisis pendiente - será completado automáticamente.";
-                        }
+                        return "";
                     }
                     else
                     {
                         Console.WriteLine($"⚠️ API Error ({response.StatusCode}): {responseContent}");
-                        return $"Error temporal de la API. Análisis histórico pendiente.";
+                        if (attempt < maxRetries)
+                        {
+                            await Task.Delay(3000);
+                            continue;
+                        }
+                        return "";
                     }
+                }
+                catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
+                {
+                    Console.WriteLine($"⚠️ Groq API timeout (attempt {attempt}/{maxRetries}) - took longer than 45s");
+                    if (attempt < maxRetries)
+                    {
+                        await Task.Delay(2000);
+                        continue;
+                    }
+                    Console.WriteLine($"❌ Final timeout after {maxRetries} attempts");
+                    return "";
                 }
                 catch (HttpRequestException ex)
                 {
@@ -244,16 +296,22 @@ namespace ApiCausality360.Services
                         await Task.Delay(3000);
                         continue;
                     }
-                    return $"Error de conexión. Información histórica no disponible temporalmente.";
+                    return "";
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"⚠️ Unexpected error: {ex.Message}");
-                    return $"Error inesperado. Análisis comparativo pendiente.";
+                    if (attempt < maxRetries)
+                    {
+                        await Task.Delay(2000);
+                        continue;
+                    }
+                    return "";
                 }
             }
 
-            return "Información histórica no disponible tras múltiples intentos.";
+            Console.WriteLine($"❌ All {maxRetries} attempts failed");
+            return "";
         }
 
         private int GetRetryAfterTime(string responseContent)

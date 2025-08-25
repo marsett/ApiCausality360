@@ -22,7 +22,7 @@ namespace ApiCausality360.Services
         private static readonly SemaphoreSlim _rateLimitSemaphore = new(1, 1);
         private static DateTime _lastApiCall = DateTime.MinValue;
         // Reducir el tiempo entre llamadas para procesar más rápido
-        private static readonly TimeSpan _minTimeBetweenCalls = TimeSpan.FromSeconds(1); // 🔥 REDUCIDO A 1 SEGUNDO
+        private static readonly TimeSpan _minTimeBetweenCalls = TimeSpan.FromMilliseconds(1500); // MÁS CONSERVADOR
 
         public SmartCategorizerService(IConfiguration configuration, HttpClient httpClient, ILogger<SmartCategorizerService> logger)
         {
@@ -55,6 +55,7 @@ namespace ApiCausality360.Services
         private async Task<string> DetermineCategoryWithAI(string title, string description)
         {
             const int maxRetries = 3;
+            var baseDelay = TimeSpan.FromSeconds(2); // 🔥 DELAY BASE MÁS CORTO
             
             for (int attempt = 1; attempt <= maxRetries; attempt++)
             {
@@ -73,31 +74,17 @@ namespace ApiCausality360.Services
                             await Task.Delay(delayNeeded);
                         }
 
-                        // 🔥 PROMPT MEJORADO PARA DIVERSIDAD DE CATEGORÍAS
-                        var prompt = $"Categoriza la siguiente noticia en UNA de estas 5 categorías EXACTAS. IMPORTANTE: Busca diversidad, no todo es política:\n\n" +
-                                    $"CATEGORÍAS VÁLIDAS (busca distribución equilibrada):\n" +
-                                    $"- Política: Solo gobierno, partidos, elecciones, leyes específicas\n" +
-                                    $"- Economía: Empresas, mercados, finanzas, PIB, inflación, trabajo, industria\n" +
-                                    $"- Tecnología: Innovación, apps, software, inteligencia artificial, startups tech\n" +
-                                    $"- Social: Emergencias, salud, educación, justicia, sociedad, cultura\n" +
-                                    $"- Internacional: Países extranjeros, diplomacia, conflictos globales, UE\n\n" +
-                                    $"NOTICIA A CATEGORIZAR:\n" +
-                                    $"TÍTULO: {title}\n" +
-                                    $"DESCRIPCIÓN: {description.Substring(0, Math.Min(300, description.Length))}\n\n" +
-                                    $"INSTRUCCIONES CRÍTICAS:\n" +
-                                    $"- PRIORIZA categorías menos obvias (Economía, Tecnología, Internacional)\n" +
-                                    $"- Si menciona empresas, trabajo, industria → Economía\n" +
-                                    $"- Si menciona otros países, UE, diplomacia → Internacional\n" +
-                                    $"- Si menciona tecnología, apps, innovación → Tecnología\n" +
-                                    $"- Solo usa 'Política' si es claramente sobre gobierno/partidos\n" +
-                                    $"- Solo usa 'Social' si no encaja en las otras 4\n" +
-                                    $"- Si es DEPORTES, ENTRETENIMIENTO, FAMOSOS → Responde: 'Excluido'\n\n" +
-                                    $"RESPUESTA (una sola palabra):";
+                        // PROMPT MÁS CORTO Y DIRECTO
+                        var shortPrompt = $"Categoriza EXACTAMENTE en una palabra:\n" +
+                                        $"Opciones: Política, Economía, Tecnología, Social, Internacional, Excluido\n\n" +
+                                        $"Título: {title}\n" +
+                                        $"Texto: {description.Substring(0, Math.Min(200, description.Length))}\n\n" +
+                                        $"Categoría:";
 
-                        var response = await CallGroqForCategorizationAsync(prompt);
+                        var response = await CallGroqForCategorizationAsync(shortPrompt);
                         _lastApiCall = DateTime.Now;
                         
-                        // VALIDAR que la respuesta sea una categoría válida
+                        // Validar respuesta
                         var validCategories = new[] { "Política", "Economía", "Tecnología", "Social", "Internacional", "Excluido" };
                         
                         foreach (var category in validCategories)
@@ -109,7 +96,6 @@ namespace ApiCausality360.Services
                             }
                         }
                         
-                        // Si la IA devuelve algo inesperado, excluir por seguridad
                         _logger.LogWarning($"⚠️ AI returned unexpected category: {response}. Excluding by default.");
                         return "Excluido";
                     }
@@ -124,17 +110,26 @@ namespace ApiCausality360.Services
                     
                     if (attempt < maxRetries)
                     {
-                        // 🔥 EXPONENTIAL BACKOFF: Esperar más tiempo en cada intento
-                        var waitTime = TimeSpan.FromSeconds(10 * attempt); // 10s, 20s, 30s
+                        var waitTime = TimeSpan.FromSeconds(5 + (attempt * 3)); // 🔥 8s, 11s, 14s
                         _logger.LogInformation($"⏳ Waiting {waitTime.TotalSeconds}s before retry...");
                         await Task.Delay(waitTime);
                         continue;
                     }
-                    else
+                    throw new Exception("Rate limit exceeded after multiple retries");
+                }
+                catch (Exception ex) when (ex.Message.Contains("InternalServerError") || ex.Message.Contains("Service overloaded"))
+                {
+                    _logger.LogError($"❌ Groq service error on attempt {attempt}/{maxRetries}: {ex.Message}");
+                    
+                    if (attempt < maxRetries)
                     {
-                        _logger.LogError($"❌ Rate limit exceeded after {maxRetries} attempts");
-                        throw new Exception("Rate limit exceeded after multiple retries");
+                        // 🔥 Para errores 500, esperar menos tiempo pero más incremental
+                        var waitTime = baseDelay.Add(TimeSpan.FromSeconds(attempt * 2)); // 2s, 4s, 6s
+                        _logger.LogInformation($"⏳ Groq service error, waiting {waitTime.TotalSeconds}s before retry...");
+                        await Task.Delay(waitTime);
+                        continue;
                     }
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -142,13 +137,11 @@ namespace ApiCausality360.Services
                     
                     if (attempt < maxRetries)
                     {
-                        await Task.Delay(TimeSpan.FromSeconds(5 * attempt)); // 5s, 10s, 15s
+                        var waitTime = baseDelay.Add(TimeSpan.FromSeconds(attempt)); // 3s, 4s, 5s
+                        await Task.Delay(waitTime);
                         continue;
                     }
-                    else
-                    {
-                        throw;
-                    }
+                    throw;
                 }
             }
             
@@ -165,6 +158,11 @@ namespace ApiCausality360.Services
                 throw new Exception("Groq API Key not configured");
             }
 
+            // 🔥 SOLUCIÓN: NO reutilizar el HttpClient inyectado
+            // Crear un HttpClient nuevo para cada request
+            using var httpClient = new HttpClient();
+            httpClient.Timeout = TimeSpan.FromSeconds(30);
+
             var requestBody = new
             {
                 model = "llama-3.1-8b-instant",
@@ -172,16 +170,16 @@ namespace ApiCausality360.Services
                 {
                     new {
                         role = "system",
-                        content = "Eres un categorizador de noticias experto. SOLO respondes con el nombre exacto de la categoría o 'Excluido'. NUNCA des explicaciones adicionales."
+                        content = "Categoriza en una palabra exacta: Política, Economía, Tecnología, Social, Internacional, Excluido"
                     },
                     new {
                         role = "user",
                         content = prompt
                     }
                 },
-                max_tokens = 50, // Solo necesitamos una palabra
-                temperature = 0.1, // Muy determinista
-                top_p = 0.9,
+                max_tokens = 10,
+                temperature = 0.0,
+                top_p = 0.8,
                 stream = false
             };
 
@@ -192,14 +190,35 @@ namespace ApiCausality360.Services
 
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-            _httpClient.DefaultRequestHeaders.Clear();
-            _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+            // 🔥 Headers limpios en HttpClient nuevo
+            httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+            httpClient.DefaultRequestHeaders.Add("User-Agent", "ApiCausality360/1.0");
 
-            var response = await _httpClient.PostAsync(apiUrl, content);
-            var responseContent = await response.Content.ReadAsStringAsync();
-
-            if (response.IsSuccessStatusCode)
+            try
             {
+                var response = await httpClient.PostAsync(apiUrl, content);
+                var responseContent = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogError($"❌ Groq API Error: {response.StatusCode} - {responseContent}");
+                    
+                    if (response.StatusCode == System.Net.HttpStatusCode.InternalServerError)
+                    {
+                        throw new Exception("Groq InternalServerError - Service overloaded");
+                    }
+                    if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                    {
+                        throw new Exception("TooManyRequests");
+                    }
+                    if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+                    {
+                        throw new Exception("Groq BadRequest - Invalid prompt");
+                    }
+                    
+                    throw new Exception($"API Error: {response.StatusCode}");
+                }
+
                 var result = JsonSerializer.Deserialize<JsonElement>(responseContent);
 
                 if (result.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
@@ -208,12 +227,31 @@ namespace ApiCausality360.Services
                     if (firstChoice.TryGetProperty("message", out var message) &&
                         message.TryGetProperty("content", out var messageContent))
                     {
-                        return messageContent.GetString()?.Trim() ?? "Excluido";
+                        var content_result = messageContent.GetString()?.Trim() ?? "Excluido";
+                        
+                        if (string.IsNullOrWhiteSpace(content_result))
+                        {
+                            _logger.LogWarning("⚠️ Groq returned empty content");
+                            return "Excluido";
+                        }
+                        
+                        return content_result;
                     }
                 }
-            }
 
-            throw new Exception($"API Error: {response.StatusCode}");
+                _logger.LogError($"❌ Groq response format unexpected: {responseContent}");
+                return "Excluido";
+            }
+            catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
+            {
+                _logger.LogError("❌ Groq API timeout");
+                throw new Exception("Groq API timeout");
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogError($"❌ Groq HTTP error: {ex.Message}");
+                throw new Exception($"Groq HTTP error: {ex.Message}");
+            }
         }
 
         public bool AreContentCoherent(string title, string description)

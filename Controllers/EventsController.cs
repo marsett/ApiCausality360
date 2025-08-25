@@ -95,11 +95,13 @@ namespace ApiCausality360.Controllers
             // Fallback: Si el Background Service no ha ejecutado aún o falló
             _logger.LogWarning($"⚠️ [RECENT] No events found for today {today:dd/MM/yyyy}. Background Service may not have run yet.");
             
-            // Verificar la hora actual para determinar la estrategia
-            var currentHour = DateTime.Now.Hour;
-            var currentMinute = DateTime.Now.Minute;
+            // 🔥 CORREGIR: Usar zona horaria Madrid consistentemente
+            var madridTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Romance Standard Time");
+            var nowMadrid = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, madridTimeZone);
+            var currentHour = nowMadrid.Hour;
+            var currentMinute = nowMadrid.Minute;
             var currentTime = currentHour * 60 + currentMinute;
-            var scheduledTime = 17 * 60 + 0; // 17:00 en minutos desde medianoche
+            var scheduledTime = 12 * 60 + 0; // 12:00 en minutos desde medianoche MADRID
             
             // Tiempo de espera antes/después del scheduler (±10 minutos)
             var bufferMinutes = 10;
@@ -107,7 +109,7 @@ namespace ApiCausality360.Controllers
             if (Math.Abs(currentTime - scheduledTime) <= bufferMinutes)
             {
                 // Estamos cerca de la hora del scheduler (±10 min)
-                _logger.LogInformation($"⏳ [RECENT] Scheduler window detected (±10min from 17:00). Returning previous events to avoid conflicts.");
+                _logger.LogInformation($"⏳ [RECENT] Scheduler window detected (±10min from 12:00). Returning previous events to avoid conflicts.");
                 
                 var recentEvents = await _eventService.GetRecentEventsAsync(count);
                 var recentDtos = _mapper.Map<List<EventDto>>(recentEvents);
@@ -126,7 +128,7 @@ namespace ApiCausality360.Controllers
             else if (currentTime < scheduledTime)
             {
                 // Es antes del scheduler
-                _logger.LogInformation($"🌅 [RECENT] Before scheduler time ({DateTime.Now:HH:mm} < 17:00). Returning recent events from previous days.");
+                _logger.LogInformation($"🌅 [RECENT] Before scheduler time ({nowMadrid:HH:mm} < 12:00). Returning recent events from previous days.");
                 
                 var recentEvents = await _eventService.GetRecentEventsAsync(count);
                 var recentDtos = _mapper.Map<List<EventDto>>(recentEvents);
@@ -135,7 +137,7 @@ namespace ApiCausality360.Controllers
             else
             {
                 // Ya pasó suficiente tiempo después del scheduler, algo falló
-                _logger.LogWarning($"🚨 [RECENT] Scheduler should have completed by now ({DateTime.Now:HH:mm}). Triggering emergency fallback...");
+                _logger.LogWarning($"🚨 [RECENT] Scheduler should have completed by now ({nowMadrid:HH:mm}). Triggering emergency fallback...");
                 
                 try
                 {
@@ -624,35 +626,26 @@ namespace ApiCausality360.Controllers
             return Ok(eventDtos);
         }
 
-        //[HttpGet("categories/summary")]
-        //public async Task<ActionResult<object>> GetCategoriesSummary()
-        //{
-        //    var cacheKey = $"categories_summary_{DateTime.Today:yyyy-MM-dd}";
-
-        //    if (_cacheService.TryGet<object>(cacheKey, out var cachedSummary))
-        //    {
-        //        return Ok(cachedSummary);
-        //    }
-
-        //    var today = DateTime.Today;
-        //    var events = await _eventService.GetEventsByDateAsync(today);
-
-        //    var summary = events
-        //        .SelectMany(e => e.EventCategories.Select(ec => ec.Category.Name))
-        //        .GroupBy(c => c)
-        //        .Select(g => new {
-        //            Category = g.Key,
-        //            Count = g.Count(),
-        //            LatestEvent = events
-        //                .Where(e => e.EventCategories.Any(ec => ec.Category.Name == g.Key))
-        //                .OrderByDescending(e => e.CreatedAt)
-        //                .FirstOrDefault()?.Titulo
-        //        })
-        //        .ToList();
-
-        //    _cacheService.Set(cacheKey, summary, TimeSpan.FromHours(12));
-
-        //    return Ok(summary);
-        //}
+        /// <summary>
+        /// Endpoint para mantener la aplicación activa (UptimeRobot)
+        /// </summary>
+        [HttpGet("ping")]
+        [HttpHead("ping")]  // ← AGREGAR esta línea
+        [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+        public ActionResult Ping()
+        {
+            var madridTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Romance Standard Time");
+            var nowMadrid = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, madridTimeZone);
+            
+            return Ok(new
+            {
+                status = "alive",
+                timestamp = nowMadrid.ToString("dd/MM/yyyy HH:mm:ss"),
+                timezone = "Madrid",
+                server = "West Europe",
+                nextScheduledRun = "12:00 PM Madrid daily",
+                message = "App is awake - Background Service active"
+            });
+        }
     }
 }

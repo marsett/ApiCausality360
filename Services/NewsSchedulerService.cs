@@ -19,17 +19,23 @@ namespace ApiCausality360.Services
             {
                 try
                 {
-                    var now = DateTime.Now;
-                    var targetTime = new DateTime(now.Year, now.Month, now.Day, 12, 00, 0); // 12:00 AM procesamiento diario
+                    // 🔥 USAR ZONA HORARIA DE MADRID EXPLÍCITAMENTE
+                    var madridTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Romance Standard Time"); // Madrid/España
+                    var nowMadrid = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, madridTimeZone);
+                    var targetTime = new DateTime(nowMadrid.Year, nowMadrid.Month, nowMadrid.Day, 12, 00, 0); // 12:00 PM Madrid
 
-                    // Si ya pasó la hora de hoy, programa para mañana
-                    if (now > targetTime)
+                    // Si ya pasó la hora de hoy en Madrid, programa para mañana
+                    if (nowMadrid > targetTime)
                     {
                         targetTime = targetTime.AddDays(1);
                     }
 
-                    var delay = targetTime - now;
-                    _logger.LogInformation($"📅 Próximo procesamiento automático de noticias programado para: {targetTime:dd/MM/yyyy HH:mm}");
+                    // Calcular delay basado en tiempo de Madrid
+                    var delay = targetTime - nowMadrid;
+                    
+                    _logger.LogInformation($"📅 [MADRID TIME] Próximo procesamiento automático programado para: {targetTime:dd/MM/yyyy HH:mm} Madrid");
+                    _logger.LogInformation($"🕐 [MADRID TIME] Hora actual Madrid: {nowMadrid:dd/MM/yyyy HH:mm:ss}");
+                    _logger.LogInformation($"⏳ [MADRID TIME] Tiempo restante: {delay.Days}d {delay.Hours}h {delay.Minutes}m");
 
                     await Task.Delay(delay, stoppingToken);
 
@@ -57,15 +63,18 @@ namespace ApiCausality360.Services
 
             try
             {
-                var today = DateTime.Today;
-                var startTime = DateTime.Now;
-                _logger.LogInformation($"🚀 [SCHEDULER] Iniciando procesamiento automático de noticias para {today:dd/MM/yyyy} a las {startTime:HH:mm:ss}");
+                // 🔥 USAR HORA DE MADRID PARA LOGGING Y FECHAS
+                var madridTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Romance Standard Time");
+                var todayMadrid = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, madridTimeZone).Date;
+                var startTimeMadrid = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, madridTimeZone);
+                
+                _logger.LogInformation($"🚀 [SCHEDULER] Iniciando procesamiento automático de noticias para {todayMadrid:dd/MM/yyyy} a las {startTimeMadrid:HH:mm:ss} Madrid");
 
-                // Verificar si ya existen eventos del día
-                var existingEvents = await eventService.GetEventsByDateAsync(today);
+                // Verificar si ya existen eventos del día (usando fecha Madrid)
+                var existingEvents = await eventService.GetEventsByDateAsync(todayMadrid);
                 if (existingEvents.Any())
                 {
-                    _logger.LogInformation($"✅ [SCHEDULER] Ya existen {existingEvents.Count} eventos para {today:dd/MM/yyyy}. Cancelando procesamiento.");
+                    _logger.LogInformation($"✅ [SCHEDULER] Ya existen {existingEvents.Count} eventos para {todayMadrid:dd/MM/yyyy}. Cancelando procesamiento.");
                     return;
                 }
 
@@ -76,7 +85,7 @@ namespace ApiCausality360.Services
                 
                 if (!news.Any())
                 {
-                    _logger.LogWarning($"⚠️ [SCHEDULER] No se encontraron noticias para {today:dd/MM/yyyy}");
+                    _logger.LogWarning($"⚠️ [SCHEDULER] No se encontraron noticias para {todayMadrid:dd/MM/yyyy}");
                     return;
                 }
 
@@ -92,16 +101,16 @@ namespace ApiCausality360.Services
                         processedCount++;
                         _logger.LogInformation($"🔄 [SCHEDULER] [{processedCount}/{news.Count}] Procesando: {newsItem.Title.Substring(0, Math.Min(60, newsItem.Title.Length))}... de {newsItem.Source}");
 
-                        var currentTime = DateTime.Now;
+                        var currentTimeMadrid = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, madridTimeZone);
                         var eventItem = new ApiCausality360.Models.Event
                         {
                             Id = Guid.NewGuid(),
                             Titulo = newsItem.Title,
                             Descripcion = newsItem.Description,
-                            Fecha = currentTime.Date,
+                            Fecha = currentTimeMadrid.Date, // 🔥 FECHA MADRID
                             Fuentes = newsItem.Url,
-                            CreatedAt = currentTime,
-                            UpdatedAt = currentTime,
+                            CreatedAt = currentTimeMadrid, // 🔥 HORA MADRID
+                            UpdatedAt = currentTimeMadrid, // 🔥 HORA MADRID
                             ImageUrl = newsItem.ImageUrl,
                             SourceName = newsItem.Source
                         };
@@ -166,9 +175,9 @@ namespace ApiCausality360.Services
                 // Limpiar cachés relacionados
                 var cacheKeys = new[]
                 {
-                    $"recent_events_{today:yyyy-MM-dd}_5",
-                    $"daily_events_{today:yyyy-MM-dd}",
-                    $"today_events_{today:yyyy-MM-dd}"
+                    $"recent_events_{todayMadrid:yyyy-MM-dd}_5",
+                    $"daily_events_{todayMadrid:yyyy-MM-dd}",
+                    $"today_events_{todayMadrid:yyyy-MM-dd}"
                 };
 
                 foreach (var key in cacheKeys)
@@ -176,14 +185,14 @@ namespace ApiCausality360.Services
                     cacheService.Remove(key);
                 }
 
-                var endTime = DateTime.Now;
-                var duration = endTime - startTime;
+                var endTimeMadrid = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, madridTimeZone);
+                var duration = endTimeMadrid - startTimeMadrid;
                 
                 _logger.LogInformation($"🎯 [SCHEDULER] COMPLETADO - Procesamiento automático finalizado:");
                 _logger.LogInformation($"   📊 Eventos creados: {createdEvents.Count}/{news.Count}");
                 _logger.LogInformation($"   ⏱️ Tiempo total: {duration.TotalMinutes:F1} minutos");
-                _logger.LogInformation($"   📅 Fecha: {today:dd/MM/yyyy}");
-                _logger.LogInformation($"   🕐 Finalizado a las: {endTime:HH:mm:ss}");
+                _logger.LogInformation($"   📅 Fecha: {todayMadrid:dd/MM/yyyy}");
+                _logger.LogInformation($"   🕐 Finalizado a las: {endTimeMadrid:HH:mm:ss} Madrid");
                 _logger.LogInformation($"   📱 Los usuarios ahora tendrán noticias listas instantáneamente!");
             }
             catch (Exception ex)
