@@ -17,7 +17,7 @@ builder.Services.AddAzureClients(factory =>
 SecretClient secretClient = builder.Services.BuildServiceProvider().GetRequiredService<SecretClient>();
 
 KeyVaultSecret secretConnectionString = await secretClient.GetSecretAsync("SqlTajamar");
-KeyVaultSecret secretApiKey = await secretClient.GetSecretAsync("ApiKey");
+KeyVaultSecret secretApiKey = await secretClient.GetSecretAsync("ApiClave");
 
 // 🔥 COPIAR PATRÓN QUE FUNCIONA: Variables locales
 string connectionString = secretConnectionString.Value;
